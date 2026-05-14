@@ -77,7 +77,9 @@ PY
   echo "    fetching traefik $TAG"
   curl -fL -o traefik.tar.gz \
     "https://github.com/traefik/traefik/releases/download/${TAG}/traefik_${TAG}_linux_amd64.tar.gz"
-  tar -xzf traefik.tar.gz traefik
+  # --no-same-owner: as root, tar would otherwise try to chown to the archive's
+  # original uid/gid (1001:1001), which the network volume's filesystem rejects.
+  tar --no-same-owner -xzf traefik.tar.gz traefik
   chmod +x traefik
   rm traefik.tar.gz
   cd - >/dev/null
