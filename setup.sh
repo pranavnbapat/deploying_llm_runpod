@@ -57,13 +57,17 @@ if [ ! -x "$TRAEFIK_BIN" ]; then
   cd "$WORKSPACE/bin"
   TAG="${TRAEFIK_TAG:-}"
   if [ -z "$TAG" ]; then
-    # Capture full response first, THEN grep — avoids SIGPIPE killing curl
-    # (set -o pipefail trips on `curl | grep -m1` because grep closes stdin early).
-    RELEASE_JSON=$(curl -fsSL -H "User-Agent: deploying_llm_runpod-setup" \
-                   https://api.github.com/repos/traefik/traefik/releases/latest)
-    TAG=$(printf '%s' "$RELEASE_JSON" \
-          | grep -m1 '"tag_name":' \
-          | sed -E 's/.*"([^"]+)".*/\1/')
+    # Use python for JSON parsing — grep/sed hacks misparse when GitHub
+    # returns the response as a single line.
+    TAG=$(python3 - <<'PY' 2>/dev/null || true
+import json, urllib.request
+req = urllib.request.Request(
+    "https://api.github.com/repos/traefik/traefik/releases/latest",
+    headers={"User-Agent": "deploying_llm_runpod-setup"},
+)
+print(json.load(urllib.request.urlopen(req, timeout=15))["tag_name"])
+PY
+)
   fi
   if [ -z "$TAG" ]; then
     echo "ERROR: Could not determine Traefik version from GitHub API." >&2
