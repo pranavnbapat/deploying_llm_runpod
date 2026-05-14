@@ -1,13 +1,25 @@
 http:
   routers:
+    # OpenAI-compatible inference API — with GPU concurrency cap + rate limit.
     vllm-router:
       entryPoints:
         - web
       rule: "PathPrefix(`/v1`)"
       service: vllm-svc
+      priority: 50
       middlewares:
         - vllm-ratelimit
         - vllm-inflight
+
+    # Everything else vLLM exposes (/docs, /redoc, /openapi.json, /health,
+    # /metrics, /ping, /tokenize, /detokenize, /version, …) — no middlewares.
+    # Low priority so /v1 and /admin always win for their own paths.
+    vllm-aux-router:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/`)"
+      service: vllm-svc
+      priority: 1
 
   services:
     vllm-svc:

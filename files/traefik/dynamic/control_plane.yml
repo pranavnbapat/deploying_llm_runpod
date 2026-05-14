@@ -5,6 +5,7 @@ http:
         - web
       rule: "PathPrefix(`/admin`)"
       service: admin-svc
+      priority: 100   # win over vllm-aux-router (catch-all) for /admin/*
       middlewares:
         - admin-basicauth
         - admin-stripprefix
