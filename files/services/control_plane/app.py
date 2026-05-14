@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -96,10 +97,39 @@ def supervisorctl(*args: str, timeout: int = 30) -> str:
     return (res.stdout + res.stderr).rstrip()
 
 
+def _build_model_choices() -> type[Enum]:
+    """Build a string-valued Enum from the registry so Swagger UI renders
+    /models/switch with a dropdown. The enum is built once at app startup;
+    `supervisorctl restart control_plane` after editing models.yaml to
+    refresh the dropdown.
+    """
+    registry = load_registry()
+    if not registry:
+        return Enum("AvailableModel", {"_none": "__no_models_registered__"}, type=str)
+    members = {f"m{i}": m["id"] for i, m in enumerate(registry)}
+    return Enum("AvailableModel", members, type=str)
+
+
+AvailableModel = _build_model_choices()
+
+
 class SwitchRequest(BaseModel):
-    model: str = Field(..., description="HF model id, e.g. Qwen/Qwen2.5-7B-Instruct")
-    max_len: Optional[int] = Field(None, description="Override MAX_LEN")
-    extra_args: Optional[str] = Field(None, description="Override VLLM_EXTRA_ARGS")
+    model: AvailableModel = Field(
+        ...,
+        description=(
+            "Pick a model from the registry (/workspace/ops/models.yaml). "
+            "Edit that file + `supervisorctl restart control_plane` to add or "
+            "remove choices."
+        ),
+    )
+    max_len: Optional[int] = Field(
+        None,
+        description="Override MAX_LEN. Omit to use the registry preset for this model.",
+    )
+    extra_args: Optional[str] = Field(
+        None,
+        description="Override VLLM_EXTRA_ARGS. Omit to use the registry preset.",
+    )
 
 
 @app.get("/health")
@@ -172,18 +202,19 @@ async def loaded() -> dict:
 
 @app.post("/models/switch")
 def switch(req: SwitchRequest) -> dict:
+    model_id = req.model.value  # enum member -> HF id string
     registry = {m["id"]: m for m in load_registry()}
-    updates: dict[str, str] = {"MODEL": req.model}
+    updates: dict[str, str] = {"MODEL": model_id}
 
     if req.max_len is not None:
         updates["MAX_LEN"] = str(req.max_len)
-    elif req.model in registry and registry[req.model].get("max_len") is not None:
-        updates["MAX_LEN"] = str(registry[req.model]["max_len"])
+    elif model_id in registry and registry[model_id].get("max_len") is not None:
+        updates["MAX_LEN"] = str(registry[model_id]["max_len"])
 
     if req.extra_args is not None:
         updates["VLLM_EXTRA_ARGS"] = req.extra_args
-    elif req.model in registry:
-        updates["VLLM_EXTRA_ARGS"] = registry[req.model].get("extra_args", "")
+    elif model_id in registry:
+        updates["VLLM_EXTRA_ARGS"] = registry[model_id].get("extra_args", "")
 
     write_env_keys(ENV_FILE, updates)
     result = supervisorctl("restart", "vllm")

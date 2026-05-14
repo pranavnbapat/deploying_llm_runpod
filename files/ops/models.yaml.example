@@ -1,43 +1,16 @@
-# Registry of models the control plane offers in /admin/models/available.
-# Anything NOT in this list but found in /workspace/hf_cache/ is also returned,
-# marked registered=false.
+# Registry of models the control plane offers in /admin/models/available
+# and in the /admin/models/switch dropdown (Swagger UI).
 #
 # extra_args is appended verbatim to `vllm serve` (i.e. VLLM_EXTRA_ARGS).
-# Pick presets that fit your GPU; the examples below assume a single A40 (46 GB).
+#
+# IMPORTANT: edits here only affect the dropdown after a control_plane restart:
+#   supervisorctl restart control_plane
+# (the registry is read live for /models/available, but the OpenAPI schema
+# is fixed at app startup.)
 
 models:
   - id: stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ
     label: Qwen3 30B-A3B Instruct (AWQ)
     max_len: 32768
     extra_args: "--quantization awq"
-    notes: "Default. MoE 30B total / 3B active, AWQ-quantised, ~17–20 GB VRAM."
-
-  - id: Qwen/Qwen2.5-7B-Instruct
-    label: Qwen 2.5 7B Instruct
-    max_len: 16384
-    extra_args: ""
-    notes: "Open weights, ~16 GB VRAM at fp16. Good fallback / smoke-test model."
-
-  - id: meta-llama/Llama-3.1-8B-Instruct
-    label: Llama 3.1 8B Instruct
-    max_len: 16384
-    extra_args: ""
-    notes: "Gated — requires `hf auth login`. ~16 GB VRAM."
-
-  - id: mistralai/Mistral-7B-Instruct-v0.3
-    label: Mistral 7B Instruct v0.3
-    max_len: 16384
-    extra_args: ""
-    notes: "Gated. ~14 GB VRAM."
-
-  - id: Qwen/Qwen2.5-32B-Instruct-AWQ
-    label: Qwen 2.5 32B Instruct (AWQ)
-    max_len: 8192
-    extra_args: "--quantization awq"
-    notes: "Quantised, ~20 GB VRAM. Larger model still comfortable on A40."
-
-  - id: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4
-    label: Llama 3.1 70B Instruct (AWQ INT4)
-    max_len: 4096
-    extra_args: "--quantization awq"
-    notes: "Pushes the A40 (~35 GB). Expect tight max-len and slow first token."
+    notes: "MoE 30B total / 3B active, AWQ-quantised, ~17–20 GB VRAM."
