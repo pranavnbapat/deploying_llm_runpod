@@ -43,7 +43,7 @@ echo "==> vllm venv"
 if [ ! -d "$VENV" ]; then
   uv venv --python 3.11 "$VENV"
 fi
-uv pip install --python "$VENV/bin/python" --upgrade vllm "huggingface_hub[cli]"
+uv pip install --python "$VENV/bin/python" --upgrade vllm huggingface_hub
 
 echo "==> control_plane venv"
 if [ ! -d "$CP_VENV" ]; then
@@ -55,8 +55,21 @@ uv pip install --python "$CP_VENV/bin/python" --upgrade \
 echo "==> traefik binary"
 if [ ! -x "$TRAEFIK_BIN" ]; then
   cd "$WORKSPACE/bin"
-  TAG=$(curl -fsSL https://api.github.com/repos/traefik/traefik/releases/latest \
-        | grep -m1 '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+  TAG="${TRAEFIK_TAG:-}"
+  if [ -z "$TAG" ]; then
+    # Capture full response first, THEN grep — avoids SIGPIPE killing curl
+    # (set -o pipefail trips on `curl | grep -m1` because grep closes stdin early).
+    RELEASE_JSON=$(curl -fsSL -H "User-Agent: deploying_llm_runpod-setup" \
+                   https://api.github.com/repos/traefik/traefik/releases/latest)
+    TAG=$(printf '%s' "$RELEASE_JSON" \
+          | grep -m1 '"tag_name":' \
+          | sed -E 's/.*"([^"]+)".*/\1/')
+  fi
+  if [ -z "$TAG" ]; then
+    echo "ERROR: Could not determine Traefik version from GitHub API." >&2
+    echo "       Override manually: TRAEFIK_TAG=v3.5.0 ./setup.sh" >&2
+    exit 1
+  fi
   echo "    fetching traefik $TAG"
   curl -fL -o traefik.tar.gz \
     "https://github.com/traefik/traefik/releases/download/${TAG}/traefik_${TAG}_linux_amd64.tar.gz"
