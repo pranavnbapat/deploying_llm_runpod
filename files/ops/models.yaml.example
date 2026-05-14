@@ -1,0 +1,37 @@
+# Registry of models the control plane offers in /admin/models/available.
+# Anything NOT in this list but found in /workspace/hf_cache/ is also returned,
+# marked registered=false.
+#
+# extra_args is appended verbatim to `vllm serve` (i.e. VLLM_EXTRA_ARGS).
+# Pick presets that fit your GPU; the examples below assume a single A40 (46 GB).
+
+models:
+  - id: Qwen/Qwen2.5-7B-Instruct
+    label: Qwen 2.5 7B Instruct
+    max_len: 16384
+    extra_args: ""
+    notes: "Default first-run model. Open weights, ~16 GB VRAM at fp16."
+
+  - id: meta-llama/Llama-3.1-8B-Instruct
+    label: Llama 3.1 8B Instruct
+    max_len: 16384
+    extra_args: ""
+    notes: "Gated — requires `hf auth login`. ~16 GB VRAM."
+
+  - id: mistralai/Mistral-7B-Instruct-v0.3
+    label: Mistral 7B Instruct v0.3
+    max_len: 16384
+    extra_args: ""
+    notes: "Gated. ~14 GB VRAM."
+
+  - id: Qwen/Qwen2.5-32B-Instruct-AWQ
+    label: Qwen 2.5 32B Instruct (AWQ)
+    max_len: 8192
+    extra_args: "--quantization awq"
+    notes: "Quantised, ~20 GB VRAM. Larger model still comfortable on A40."
+
+  - id: hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4
+    label: Llama 3.1 70B Instruct (AWQ INT4)
+    max_len: 4096
+    extra_args: "--quantization awq"
+    notes: "Pushes the A40 (~35 GB). Expect tight max-len and slow first token."

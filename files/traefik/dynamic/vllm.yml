@@ -1,0 +1,29 @@
+http:
+  routers:
+    vllm-router:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/v1`)"
+      service: vllm-svc
+      middlewares:
+        - vllm-ratelimit
+        - vllm-inflight
+
+  services:
+    vllm-svc:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8001"
+
+  middlewares:
+    # Token-bucket rate limit. average = sustained req/s, burst = short spike allowance.
+    vllm-ratelimit:
+      rateLimit:
+        average: 2
+        burst: 5
+
+    # GPU concurrency cap. amount: 1 = one in-flight request at a time per backend.
+    # Critical for single-GPU vLLM — pile-ups hurt latency badly and can OOM.
+    vllm-inflight:
+      inFlightReq:
+        amount: 1

@@ -1,0 +1,33 @@
+http:
+  routers:
+    admin-router:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/admin`)"
+      service: admin-svc
+      middlewares:
+        - admin-basicauth
+        - admin-stripprefix
+
+  services:
+    admin-svc:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8002"
+
+  middlewares:
+    # HTTP Basic Auth. Users live in /workspace/traefik/users.htpasswd
+    # (bcrypt hashes). Manage with:
+    #   htpasswd -B /workspace/traefik/users.htpasswd <user>
+    # Traefik watches the file — changes apply without restart.
+    admin-basicauth:
+      basicAuth:
+        usersFile: "/workspace/traefik/users.htpasswd"
+        realm: "vLLM admin"
+        removeHeader: true  # strip Authorization before forwarding
+
+    # /admin/models/available  ->  /models/available  (FastAPI routes are unprefixed)
+    admin-stripprefix:
+      stripPrefix:
+        prefixes:
+          - "/admin"

@@ -1,0 +1,14 @@
+entryPoints:
+  web:
+    address: ":8000"
+
+providers:
+  file:
+    directory: "/workspace/traefik/dynamic"
+    watch: true
+
+log:
+  level: INFO
+
+accessLog:
+  filePath: "/workspace/logs/traefik_access.log"
