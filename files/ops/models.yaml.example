@@ -6,11 +6,17 @@
 # Pick presets that fit your GPU; the examples below assume a single A40 (46 GB).
 
 models:
+  - id: stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ
+    label: Qwen3 30B-A3B Instruct (AWQ)
+    max_len: 32768
+    extra_args: "--quantization awq"
+    notes: "Default. MoE 30B total / 3B active, AWQ-quantised, ~17–20 GB VRAM."
+
   - id: Qwen/Qwen2.5-7B-Instruct
     label: Qwen 2.5 7B Instruct
     max_len: 16384
     extra_args: ""
-    notes: "Default first-run model. Open weights, ~16 GB VRAM at fp16."
+    notes: "Open weights, ~16 GB VRAM at fp16. Good fallback / smoke-test model."
 
   - id: meta-llama/Llama-3.1-8B-Instruct
     label: Llama 3.1 8B Instruct
