@@ -36,6 +36,35 @@ MODELS_YAML=$WORKSPACE/ops/models.yaml
 HF_CACHE=$WORKSPACE/hf_cache
 TRAEFIK_BIN=$WORKSPACE/bin/traefik
 
+echo "==> driver / CUDA preflight"
+# vLLM's PyPI wheel is built against the *current* CUDA toolkit (CUDA 13.x as of
+# late-2025/2026 releases). The pod's NVIDIA driver must support that or newer,
+# otherwise vllm._C will fail to import with `libcudart.so.N: cannot open shared
+# object file` at startup. Fail fast here with a useful message instead.
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  echo "ERROR: nvidia-smi not found — this script requires a GPU pod." >&2
+  exit 1
+fi
+DRIVER_CUDA=$(nvidia-smi 2>/dev/null | awk -F'CUDA Version: *' '/CUDA Version/ {print $2}' | awk '{print $1}' | head -1)
+if [ -z "$DRIVER_CUDA" ]; then
+  echo "ERROR: Could not parse 'CUDA Version' from nvidia-smi output." >&2
+  exit 1
+fi
+DRIVER_CUDA_MAJOR=${DRIVER_CUDA%%.*}
+if [ "$DRIVER_CUDA_MAJOR" -lt 13 ]; then
+  cat >&2 <<EOF
+ERROR: NVIDIA driver supports only CUDA $DRIVER_CUDA, but vLLM's current PyPI
+       wheel requires CUDA 13.x. Pick a Runpod template with a newer driver
+       (CUDA Version >= 13.0 in nvidia-smi — typically driver 580+).
+
+If you can't change the pod, the manual escape hatch is to pin an older vllm:
+       uv pip install --python $VENV/bin/python --reinstall 'vllm<0.20'
+       (and accept that some recent models / quant formats won't work).
+EOF
+  exit 1
+fi
+echo "    driver CUDA $DRIVER_CUDA — OK"
+
 echo "==> apt packages"
 apt-get update -qq
 apt-get install -y -qq supervisor apache2-utils openssl curl nano git wget htop tmux tar ca-certificates
@@ -67,18 +96,18 @@ if [ ! -d "$VENV" ]; then
 fi
 uv pip install --python "$VENV/bin/python" --upgrade vllm huggingface_hub
 
-# Reinstall torch from the cu128 wheel index. vLLM's default install pulls a
-# torch built against a newer CUDA (12.9+) than Runpod's stock driver supports
-# (typically 570.x → CUDA 12.8). cu128 wheels work with any driver ≥525.60.13,
-# which covers every modern Runpod template.
-echo "==> torch (cu128 wheel — for Runpod driver 570/CUDA 12.8 compatibility)"
-uv pip install --python "$VENV/bin/python" --reinstall \
-  torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/cu128
-
-# Sanity-check: torch.cuda must initialize against the live driver before we
-# hand control to supervisord, otherwise vllm will crash-loop on engine start.
-"$VENV/bin/python" -c "import torch; assert torch.cuda.is_available(), 'CUDA not available — driver/torch mismatch'; print(f'    torch={torch.__version__} cuda={torch.version.cuda} gpus={torch.cuda.device_count()}')"
+# Sanity-check: torch must actually be able to allocate on the GPU. Lazy init
+# only fires when we touch a CUDA op — `is_available()` lies on its own. This
+# catches driver/torch mismatches before supervisord starts vllm.
+"$VENV/bin/python" - <<'PY'
+import torch
+assert torch.cuda.is_available(), "torch.cuda.is_available() returned False"
+try:
+    torch.zeros(1, device='cuda')
+except Exception as e:
+    raise SystemExit(f"CUDA init failed (driver too old for torch's CUDA?): {e}")
+print(f"    torch={torch.__version__} cuda={torch.version.cuda} gpus={torch.cuda.device_count()}")
+PY
 
 echo "==> control_plane venv"
 if [ ! -d "$CP_VENV" ]; then
