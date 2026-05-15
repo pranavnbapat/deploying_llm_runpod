@@ -232,6 +232,7 @@ supervisorctl restart vllm
 ```
 
 Use `VLLM_EXTRA_ARGS` for anything specific to a model (quantisation, dtype, mm limits, trust-remote-code, etc.).
+**Quote the value** if it contains spaces — `vllm.env` is sourced by bash, so `VLLM_EXTRA_ARGS=--quantization awq` (no quotes) makes the shell try to *run* `awq` as a command. Write `VLLM_EXTRA_ARGS="--quantization awq"` instead. (The control plane's `/admin/models/switch` already quotes correctly on writeback.)
 
 ---
 

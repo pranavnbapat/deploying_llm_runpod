@@ -9,6 +9,7 @@ publicly without re-adding an auth check here.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from enum import Enum
 from pathlib import Path
@@ -31,6 +32,19 @@ KNOWN_PROGRAMS = {"vllm", "traefik", "control_plane"}
 app = FastAPI(title="vLLM Control Plane", docs_url="/docs", redoc_url=None)
 
 
+def _unquote(v: str) -> str:
+    """Strip a single pair of matching surrounding quotes (shell-style)."""
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+        return v[1:-1]
+    return v
+
+
+def _shell_quote(v: str) -> str:
+    """Quote for safe re-sourcing by bash. shlex.quote handles spaces, $, etc."""
+    return shlex.quote(v)
+
+
 def parse_env_file(path: Path) -> dict[str, str]:
     env: dict[str, str] = {}
     if not path.exists():
@@ -40,12 +54,16 @@ def parse_env_file(path: Path) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        env[k.strip()] = v.strip()
+        env[k.strip()] = _unquote(v)
     return env
 
 
 def write_env_keys(path: Path, updates: dict[str, str]) -> None:
-    """Rewrite env file preserving comments and ordering; append unknown keys."""
+    """Rewrite env file preserving comments and ordering; append unknown keys.
+
+    Values are shell-quoted so the file remains safe to `source` in bash even
+    when they contain spaces (e.g. VLLM_EXTRA_ARGS=\"--quantization awq\").
+    """
     lines = path.read_text().splitlines() if path.exists() else []
     seen: set[str] = set()
     out: list[str] = []
@@ -56,13 +74,13 @@ def write_env_keys(path: Path, updates: dict[str, str]) -> None:
             continue
         key = stripped.split("=", 1)[0].strip()
         if key in updates:
-            out.append(f"{key}={updates[key]}")
+            out.append(f"{key}={_shell_quote(updates[key])}")
             seen.add(key)
         else:
             out.append(line)
     for k, v in updates.items():
         if k not in seen:
-            out.append(f"{k}={v}")
+            out.append(f"{k}={_shell_quote(v)}")
     path.write_text("\n".join(out) + "\n")
 
 
