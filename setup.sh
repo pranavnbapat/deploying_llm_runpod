@@ -35,8 +35,9 @@ echo "==> uv"
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
-# shellcheck source=/dev/null
-source "$HOME/.local/bin/env"
+# uv installs into ~/.local/bin. Older installers wrote a `~/.local/bin/env`
+# script to source; newer ones don't. Just put the dir on PATH directly.
+export PATH="$HOME/.local/bin:$PATH"
 uv --version
 
 echo "==> vllm venv"
@@ -121,7 +122,7 @@ fi
 
 echo "==> bashrc convenience"
 add_line() { grep -qxF "$1" ~/.bashrc || echo "$1" >> ~/.bashrc; }
-add_line 'source $HOME/.local/bin/env'
+add_line 'export PATH="$HOME/.local/bin:$PATH"'
 add_line "alias supervisorctl='supervisorctl -c $WORKSPACE/ops/supervisord.conf'"
 add_line "export HF_HOME=$HF_CACHE"
 
