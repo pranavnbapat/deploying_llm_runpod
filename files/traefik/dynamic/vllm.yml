@@ -25,7 +25,9 @@ http:
     vllm-svc:
       loadBalancer:
         servers:
-          - url: "http://127.0.0.1:8001"
+          # Keep in sync with VLLM_PORT in /workspace/envs/vllm.env.
+          # 18001 chosen because Runpod's nginx owns 8001 on most templates.
+          - url: "http://127.0.0.1:18001"
 
   middlewares:
     # Token-bucket rate limit. average = sustained req/s, burst = short spike allowance.

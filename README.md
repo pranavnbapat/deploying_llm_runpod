@@ -2,7 +2,7 @@
 
 Production-style pod setup. Three supervised services on one pod, one public port:
 
-- **vLLM** — one model loaded at a time, behind Traefik on internal `:8001`.
+- **vLLM** — one model loaded at a time, behind Traefik on internal `:18001`.
 - **Traefik** — public `:8000`, routes `/v1/* → vLLM`, `/admin/* → control plane`, applies rate-limit + concurrency cap.
 - **Control plane** — small FastAPI app on internal `:8002` for listing models, switching the loaded model, viewing status and logs over HTTP.
 
@@ -41,7 +41,9 @@ sed -i "s|^VLLM_API_KEY=.*|VLLM_API_KEY=$KEY|" /workspace/envs/vllm.env
 echo "VLLM_API_KEY=$KEY"     # save this too
 ```
 
-Default `MODEL` is `Qwen/Qwen2.5-7B-Instruct` (open weights, no auth, fits A40 comfortably). If you want a different first-run model, `nano /workspace/envs/vllm.env`.
+Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-quantised MoE, fits A40 with headroom). If you want a different first-run model, `nano /workspace/envs/vllm.env`.
+
+> **`/workspace` persists across pod terminations** (it's a Runpod network volume). If you re-deploy onto an existing volume, `setup.sh` will *not* overwrite your `vllm.env`, `control_plane.env`, or `models.yaml` — those keep your previous edits. To start truly clean: `rm -rf /workspace/envs /workspace/ops /workspace/traefik/users.htpasswd` *before* running `setup.sh`. (The HF cache at `/workspace/hf_cache` is worth keeping — that's the expensive bit to re-download.)
 
 ### 4. (Skip unless using a gated model) — HF auth
 Interactive:
@@ -60,12 +62,12 @@ export HF_TOKEN=hf_xxx
 ```
 First vLLM boot takes 1–3 min (weights download to `/workspace/hf_cache`). Watch:
 ```bash
-supervisorctl tail -f vllm     # Ctrl-C when you see "Uvicorn running on http://127.0.0.1:8001"
+supervisorctl tail -f vllm stderr  # Ctrl-C when you see "Application startup complete"
 supervisorctl status           # vllm, control_plane, traefik all RUNNING
 ```
 
 ### 6. In the Runpod console — expose port 8000 ONLY
-Pod settings → **Exposed HTTP Ports** → add `8000`. **Do not** expose `8001` or `8002` — those are loopback-only by design. Runpod gives you a public URL: `https://<pod-id>-8000.proxy.runpod.net`.
+Pod settings → **Exposed HTTP Ports** → add `8000`. **Do not** expose `18001` (vLLM) or `8002` (control plane) — those are loopback-only by design. Runpod gives you a public URL: `https://<pod-id>-8000.proxy.runpod.net`.
 
 If the pod was already running when you added the port, restart it for the proxy URL to appear.
 
@@ -134,7 +136,7 @@ deploying_llm_runpod/
     └── traefik/
         ├── traefik.yml
         └── dynamic/
-            ├── vllm.yml           # /v1/* -> 127.0.0.1:8001
+            ├── vllm.yml           # /v1/* -> 127.0.0.1:18001
             └── control_plane.yml  # /admin/* -> 127.0.0.1:8002
 ```
 
@@ -310,7 +312,7 @@ After download, `./switch_model.sh <model>` is just a vLLM cold-start (no networ
 |---------|------|---------------------|----------------------|
 | `/v1/*` (inference) | `VLLM_API_KEY` | vLLM itself (`--api-key`) | `Authorization: Bearer <key>` |
 | `/admin/*` (management) | HTTP Basic Auth, users in `/workspace/traefik/users.htpasswd` | Traefik `basicAuth` middleware (`removeHeader: true` strips it before forwarding) | Browser login dialog, or `curl -u user:pass` |
-| Loopback `127.0.0.1:8001` (vLLM) | not exposed | — | — |
+| Loopback `127.0.0.1:18001` (vLLM) | not exposed | — | — |
 | Loopback `127.0.0.1:8002` (control plane) | not exposed; trusts Traefik | — | — |
 
 Two separate credentials by design: hand out `VLLM_API_KEY` to inference clients without giving them the ability to change which model is loaded; keep `htpasswd` to operators.
