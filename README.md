@@ -45,16 +45,20 @@ Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-qua
 
 > **`/workspace` persists across pod terminations** (it's a Runpod network volume). If you re-deploy onto an existing volume, `setup.sh` will *not* overwrite your `vllm.env`, `control_plane.env`, or `models.yaml` — those keep your previous edits. To start truly clean: `rm -rf /workspace/envs /workspace/ops /workspace/traefik/users.htpasswd` *before* running `setup.sh`. (The HF cache at `/workspace/hf_cache` is worth keeping — that's the expensive bit to re-download.)
 
-### 4. (Skip unless using a gated model) — HF auth
-Interactive:
+### 4. Set HF_TOKEN — strongly recommended
+
+Required only for *gated* models, but **strongly recommended for every deploy**: unauthenticated HF downloads are rate-limited to ~10 MB/s — a 17 GB download takes ~30 min anonymous vs. ~3 min with a token.
+
+Grab a read-only token at https://huggingface.co/settings/tokens, then:
+
 ```bash
-hf auth login
+TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+echo "HF_TOKEN=$TOKEN" >> /workspace/envs/vllm.env   # run_vllm.sh sources this, so vllm sees it
+echo "export HF_TOKEN=$TOKEN" >> ~/.bashrc           # convenience for interactive `hf` CLI use
+export HF_TOKEN=$TOKEN
 ```
-Or headless:
-```bash
-export HF_TOKEN=hf_xxx
-# Persists for this shell only; add to /root/.bashrc to keep.
-```
+
+Or interactive: `hf auth login`.
 
 ### 5. Start everything
 ```bash

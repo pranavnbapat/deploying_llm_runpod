@@ -145,6 +145,6 @@ fi
 echo "Next:"
 echo "  1. nano $ENV_FILE                  # set MODEL + VLLM_API_KEY"
 echo "  2. (optional) nano $MODELS_YAML    # curate model registry"
-echo "  3. (gated models only) hf auth login"
+echo "  3. echo HF_TOKEN=hf_xxx >> $ENV_FILE   # ~10x faster downloads; required for gated"
 echo "  4. $WORKSPACE/bin/bootstrap.sh     # start everything"
 echo "  5. supervisorctl status"
