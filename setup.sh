@@ -37,10 +37,15 @@ HF_CACHE=$WORKSPACE/hf_cache
 TRAEFIK_BIN=$WORKSPACE/bin/traefik
 
 echo "==> driver / CUDA preflight"
-# vLLM's PyPI wheel is built against the *current* CUDA toolkit (CUDA 13.x as of
-# late-2025/2026 releases). The pod's NVIDIA driver must support that or newer,
-# otherwise vllm._C will fail to import with `libcudart.so.N: cannot open shared
-# object file` at startup. Fail fast here with a useful message instead.
+# vLLM's PyPI wheel ships its own precompiled CUDA extension. Picking the wrong
+# wheel for the host driver's max CUDA results in `libcudart.so.N: cannot open
+# shared object file` at vllm import. Detect the driver's CUDA and pick a
+# compatible vllm pin.
+#
+# IMPORTANT: this reads the *host driver* CUDA from nvidia-smi, which is what
+# the kernel module supports — not the toolkit CUDA from the container image.
+# Runpod's "CUDA 13" templates only change the container image; the host
+# driver is whatever physical machine Runpod assigned (often still 570.x).
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "ERROR: nvidia-smi not found — this script requires a GPU pod." >&2
   exit 1
@@ -51,19 +56,27 @@ if [ -z "$DRIVER_CUDA" ]; then
   exit 1
 fi
 DRIVER_CUDA_MAJOR=${DRIVER_CUDA%%.*}
-if [ "$DRIVER_CUDA_MAJOR" -lt 13 ]; then
-  cat >&2 <<EOF
-ERROR: NVIDIA driver supports only CUDA $DRIVER_CUDA, but vLLM's current PyPI
-       wheel requires CUDA 13.x. Pick a Runpod template with a newer driver
-       (CUDA Version >= 13.0 in nvidia-smi — typically driver 580+).
+DRIVER_CUDA_MINOR=${DRIVER_CUDA#*.}
 
-If you can't change the pod, the manual escape hatch is to pin an older vllm:
-       uv pip install --python $VENV/bin/python --reinstall 'vllm<0.20'
-       (and accept that some recent models / quant formats won't work).
+# Map host-driver CUDA -> vllm version constraint.
+# These boundaries are based on what vllm's PyPI wheel was built against in
+# each release line. Override with VLLM_PIN env var if you need a specific
+# version (e.g. VLLM_PIN='==0.19.1' ./setup.sh).
+if [ -n "${VLLM_PIN:-}" ]; then
+  echo "    driver CUDA $DRIVER_CUDA — user override VLLM_PIN=$VLLM_PIN"
+elif [ "$DRIVER_CUDA_MAJOR" -ge 13 ]; then
+  VLLM_PIN=""
+  echo "    driver CUDA $DRIVER_CUDA — installing latest vLLM"
+elif [ "$DRIVER_CUDA_MAJOR" -eq 12 ] && [ "$DRIVER_CUDA_MINOR" -ge 4 ]; then
+  VLLM_PIN="<0.20"
+  echo "    driver CUDA $DRIVER_CUDA — pinning vLLM <0.20 (last CUDA-12 release line)"
+else
+  cat >&2 <<EOF
+ERROR: NVIDIA driver supports only CUDA $DRIVER_CUDA — too old for any recent
+       vLLM release. You need driver >= 525 (CUDA >= 12.4).
 EOF
   exit 1
 fi
-echo "    driver CUDA $DRIVER_CUDA — OK"
 
 echo "==> apt packages"
 apt-get update -qq
@@ -94,19 +107,27 @@ echo "==> vllm venv"
 if [ ! -d "$VENV" ]; then
   uv venv --python 3.11 "$VENV"
 fi
-uv pip install --python "$VENV/bin/python" --upgrade vllm huggingface_hub
+# VLLM_PIN was set by the preflight block above (empty for CUDA-13 drivers,
+# '<0.20' for CUDA-12 drivers, or whatever the operator overrode).
+uv pip install --python "$VENV/bin/python" --upgrade "vllm${VLLM_PIN}" huggingface_hub
 
-# Sanity-check: torch must actually be able to allocate on the GPU. Lazy init
-# only fires when we touch a CUDA op — `is_available()` lies on its own. This
-# catches driver/torch mismatches before supervisord starts vllm.
+# Sanity-check: both torch.cuda allocation AND vllm._C must work. Lazy init
+# only fires when we touch a CUDA op — `is_available()` lies on its own.
+# This catches driver/torch and CUDA-toolkit/vllm-extension mismatches
+# before supervisord starts vllm and crash-loops in the background.
 "$VENV/bin/python" - <<'PY'
 import torch
-assert torch.cuda.is_available(), "torch.cuda.is_available() returned False"
 try:
     torch.zeros(1, device='cuda')
 except Exception as e:
-    raise SystemExit(f"CUDA init failed (driver too old for torch's CUDA?): {e}")
+    raise SystemExit(f"CUDA allocation failed (driver too old for torch's CUDA?): {e}")
+try:
+    import vllm  # noqa: F401
+except Exception as e:
+    raise SystemExit(f"vllm import failed (likely libcudart.so mismatch): {e}")
 print(f"    torch={torch.__version__} cuda={torch.version.cuda} gpus={torch.cuda.device_count()}")
+import vllm
+print(f"    vllm={vllm.__version__}")
 PY
 
 echo "==> control_plane venv"
