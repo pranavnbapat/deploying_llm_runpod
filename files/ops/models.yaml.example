@@ -12,5 +12,5 @@ models:
   - id: stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ
     label: Qwen3 30B-A3B Instruct (AWQ)
     max_len: 32768
-    extra_args: "--quantization awq"
+    extra_args: ""   # config.json declares compressed-tensors; vLLM auto-detects
     notes: "MoE 30B total / 3B active, AWQ-quantised, ~17–20 GB VRAM."
