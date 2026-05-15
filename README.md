@@ -303,6 +303,7 @@ After download, `./switch_model.sh <model>` is just a vLLM cold-start (no networ
 |---------|------|---------------------|----------------------|
 | `/v1/*` (inference) | `VLLM_API_KEY` | vLLM itself (`--api-key`) | `Authorization: Bearer <key>` |
 | `/admin/*` (management) | HTTP Basic Auth, users in `/workspace/traefik/users.htpasswd` | Traefik `basicAuth` middleware (`removeHeader: true` strips it before forwarding) | Browser login dialog, or `curl -u user:pass` |
+| `/docs`, `/metrics`, `/health`, … (vLLM aux) | HTTP Basic Auth (same users file as `/admin/*`) | Traefik `basicAuth` on `vllm-aux-router` | Browser login dialog, or `curl -u user:pass` |
 | Loopback `127.0.0.1:18001` (vLLM) | not exposed | — | — |
 | Loopback `127.0.0.1:8002` (control plane) | not exposed; trusts Traefik | — | — |
 

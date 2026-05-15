@@ -12,14 +12,19 @@ http:
         - vllm-inflight
 
     # Everything else vLLM exposes (/docs, /redoc, /openapi.json, /health,
-    # /metrics, /ping, /tokenize, /detokenize, /version, …) — no middlewares.
+    # /metrics, /ping, /tokenize, /detokenize, /version, …).
     # Low priority so /v1 and /admin always win for their own paths.
+    # Behind Basic Auth so /docs and /metrics aren't world-readable. The
+    # admin-basicauth middleware is defined in control_plane.yml — Traefik's
+    # file provider shares one namespace across all dynamic config files.
     vllm-aux-router:
       entryPoints:
         - web
       rule: "PathPrefix(`/`)"
       service: vllm-svc
       priority: 1
+      middlewares:
+        - admin-basicauth
 
   services:
     vllm-svc:
