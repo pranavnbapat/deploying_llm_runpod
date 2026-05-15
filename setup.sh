@@ -6,6 +6,27 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 FILES="$REPO_DIR/files"
 
+# Operator secrets (HF_TOKEN, VLLM_API_KEY) can come from either:
+#   - the shell environment (export HF_TOKEN=... before running setup.sh), or
+#   - a gitignored .env file next to setup.sh (cp .env.example .env; nano .env)
+# Shell environment wins; .env only fills in vars that aren't already set.
+if [ -f "$REPO_DIR/.env" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    [[ "$line" != *=* ]] && continue
+    key="${line%%=*}"; val="${line#*=}"
+    key="${key// /}"
+    [ -z "$key" ] && continue
+    # Only set if currently unset/empty in the shell env (shell wins).
+    if [ -z "${!key:-}" ]; then
+      # Strip one pair of surrounding quotes if present.
+      val="${val%\"}"; val="${val#\"}"
+      val="${val%\'}"; val="${val#\'}"
+      export "$key=$val"
+    fi
+  done < "$REPO_DIR/.env"
+fi
+
 WORKSPACE=/workspace
 VENV=$WORKSPACE/envs/vllm
 CP_VENV=$WORKSPACE/envs/control_plane

@@ -1,6 +1,10 @@
 # ============================================================
 # Sensitive / pod-generated files — NEVER commit
 # ============================================================
+# Operator's local secrets passed into setup.sh (HF_TOKEN, etc.)
+.env
+!.env.example
+
 # Real env files are created on the pod from the .example versions.
 files/envs/vllm.env
 files/envs/control_plane.env

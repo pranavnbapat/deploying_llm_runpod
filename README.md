@@ -28,12 +28,13 @@ git clone https://github.com/pranavnbapat/deploying_llm_runpod.git
 cd deploying_llm_runpod
 ```
 
-### 2. (Recommended) export HF_TOKEN before setup
+### 2. (Recommended) put HF_TOKEN in `.env`
 Anonymous Hugging Face downloads are rate-limited to ~10 MB/s. A free-tier token gets the full CDN speed — a 17 GB model takes ~3 min with a token vs. ~30 min without. Grab one at https://huggingface.co/settings/tokens (read-only is enough), then:
 ```bash
-export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+cp .env.example .env
+nano .env                    # set HF_TOKEN=hf_xxx... (and optionally VLLM_API_KEY)
 ```
-`setup.sh` reads this env var and bakes it into `/workspace/envs/vllm.env` for you. Skip the export if you'd rather wait 30 min, or add it later by appending `HF_TOKEN=hf_xxx` to `/workspace/envs/vllm.env`.
+`.env` is gitignored, so secrets never leave the pod. `setup.sh` reads it on every run and bakes `HF_TOKEN` into `/workspace/envs/vllm.env` so `run_vllm.sh` sees it. If you'd rather pass the token one-off via the shell: `export HF_TOKEN=hf_xxx` before step 3 — shell env wins over `.env`. Skip entirely and you'll just wait ~30 min on the first model download.
 
 ### 3. Run setup
 ```bash
