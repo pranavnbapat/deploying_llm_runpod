@@ -46,6 +46,19 @@ if [ ! -d "$VENV" ]; then
 fi
 uv pip install --python "$VENV/bin/python" --upgrade vllm huggingface_hub
 
+# Reinstall torch from the cu128 wheel index. vLLM's default install pulls a
+# torch built against a newer CUDA (12.9+) than Runpod's stock driver supports
+# (typically 570.x → CUDA 12.8). cu128 wheels work with any driver ≥525.60.13,
+# which covers every modern Runpod template.
+echo "==> torch (cu128 wheel — for Runpod driver 570/CUDA 12.8 compatibility)"
+uv pip install --python "$VENV/bin/python" --reinstall \
+  torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/cu128
+
+# Sanity-check: torch.cuda must initialize against the live driver before we
+# hand control to supervisord, otherwise vllm will crash-loop on engine start.
+"$VENV/bin/python" -c "import torch; assert torch.cuda.is_available(), 'CUDA not available — driver/torch mismatch'; print(f'    torch={torch.__version__} cuda={torch.version.cuda} gpus={torch.cuda.device_count()}')"
+
 echo "==> control_plane venv"
 if [ ! -d "$CP_VENV" ]; then
   uv venv --python 3.11 "$CP_VENV"
@@ -101,7 +114,17 @@ install -m 0644 "$FILES/services/control_plane/requirements.txt" \
 
 if [ ! -f "$ENV_FILE" ]; then
   install -m 0600 "$FILES/envs/vllm.env.example" "$ENV_FILE"
-  echo "Created $ENV_FILE — EDIT IT (MODEL + VLLM_API_KEY)."
+  # Auto-fill VLLM_API_KEY (random 32-byte hex) so the live env never ships
+  # with the CHANGE_ME placeholder. Override via env var if you have one.
+  KEY="${VLLM_API_KEY:-$(openssl rand -hex 32)}"
+  sed -i "s|^VLLM_API_KEY=.*|VLLM_API_KEY=$KEY|" "$ENV_FILE"
+  GENERATED_VLLM_KEY="$KEY"
+  # Optional: bake in HF_TOKEN if the operator passed it via env. Massively
+  # speeds up the model download (anonymous requests are rate-limited).
+  if [ -n "${HF_TOKEN:-}" ]; then
+    echo "HF_TOKEN=$HF_TOKEN" >> "$ENV_FILE"
+  fi
+  echo "Created $ENV_FILE (VLLM_API_KEY auto-generated; HF_TOKEN $([ -n "${HF_TOKEN:-}" ] && echo set || echo unset))."
 fi
 if [ ! -f "$CP_ENV_FILE" ]; then
   install -m 0600 "$FILES/envs/control_plane.env.example" "$CP_ENV_FILE"
@@ -111,6 +134,8 @@ if [ ! -f "$MODELS_YAML" ]; then
   install -m 0644 "$FILES/ops/models.yaml.example" "$MODELS_YAML"
   echo "Created $MODELS_YAML — edit to curate the model registry."
 fi
+
+GENERATED_VLLM_KEY="${GENERATED_VLLM_KEY:-}"
 
 USERS_FILE=$WORKSPACE/traefik/users.htpasswd
 GENERATED_PW=""
@@ -130,21 +155,35 @@ echo
 echo "Setup complete."
 echo
 
-if [ -n "$GENERATED_PW" ]; then
+if [ -n "$GENERATED_PW" ] || [ -n "$GENERATED_VLLM_KEY" ]; then
   echo "============================================================"
-  echo "  Basic Auth credentials for /admin/* (Traefik)"
-  echo "    Username: admin"
-  echo "    Password: $GENERATED_PW"
-  echo "  SAVE THIS NOW — it will not be shown again."
-  echo "  Change later with: htpasswd -B $USERS_FILE admin"
-  echo "  Add more users with: htpasswd -B $USERS_FILE <name>"
+  echo "  SAVE THESE NOW — they will not be shown again."
+  echo
+  if [ -n "$GENERATED_PW" ]; then
+    echo "  /admin/* Basic Auth (Traefik):"
+    echo "    Username: admin"
+    echo "    Password: $GENERATED_PW"
+    echo "  Change later: htpasswd -B $USERS_FILE admin"
+    echo
+  fi
+  if [ -n "$GENERATED_VLLM_KEY" ]; then
+    echo "  /v1/* Bearer token (for OpenAI-style API calls):"
+    echo "    VLLM_API_KEY=$GENERATED_VLLM_KEY"
+    echo "  Stored in: $ENV_FILE"
+    echo
+  fi
   echo "============================================================"
   echo
 fi
 
 echo "Next:"
-echo "  1. nano $ENV_FILE                  # set MODEL + VLLM_API_KEY"
-echo "  2. (optional) nano $MODELS_YAML    # curate model registry"
-echo "  3. echo HF_TOKEN=hf_xxx >> $ENV_FILE   # ~10x faster downloads; required for gated"
-echo "  4. $WORKSPACE/bin/bootstrap.sh     # start everything"
-echo "  5. supervisorctl status"
+if ! grep -q '^HF_TOKEN=' "$ENV_FILE" 2>/dev/null; then
+  echo "  1. (recommended) echo HF_TOKEN=hf_xxx >> $ENV_FILE"
+  echo "     — Anonymous HF downloads are rate-limited to ~10 MB/s. With a token,"
+  echo "       a 17 GB model takes ~3 min instead of ~30 min."
+  echo "  2. $WORKSPACE/bin/bootstrap.sh   # start everything"
+  echo "  3. supervisorctl status          # vllm + control_plane + traefik all RUNNING"
+else
+  echo "  1. $WORKSPACE/bin/bootstrap.sh   # start everything"
+  echo "  2. supervisorctl status          # vllm + control_plane + traefik all RUNNING"
+fi

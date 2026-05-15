@@ -20,62 +20,48 @@ Same shape as your other pod, with these deltas:
 
 The exact sequence from an empty pod to a working endpoint.
 
-### 1. On the pod — clone this repo
-SSH in (or open the Runpod web terminal), then:
+### 1. Clone the repo
+SSH in (or open the Runpod web terminal):
 ```bash
 cd /workspace
 git clone https://github.com/pranavnbapat/deploying_llm_runpod.git
+cd deploying_llm_runpod
 ```
 
-### 2. Run setup
+### 2. (Recommended) export HF_TOKEN before setup
+Anonymous Hugging Face downloads are rate-limited to ~10 MB/s. A free-tier token gets the full CDN speed — a 17 GB model takes ~3 min with a token vs. ~30 min without. Grab one at https://huggingface.co/settings/tokens (read-only is enough), then:
 ```bash
-cd /workspace/deploying_llm_runpod
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
+```
+`setup.sh` reads this env var and bakes it into `/workspace/envs/vllm.env` for you. Skip the export if you'd rather wait 30 min, or add it later by appending `HF_TOKEN=hf_xxx` to `/workspace/envs/vllm.env`.
+
+### 3. Run setup
+```bash
 ./setup.sh                   # ~3–5 min
 ```
-**Save the Basic Auth password it prints** — you won't see it again. Then either open a new SSH session or `exec bash` to pick up the `supervisorctl` alias setup added to `.bashrc`.
-
-### 3. Generate + inject the vLLM API key
+This installs apt deps, creates the two venvs, pulls Traefik, drops configs into `/workspace`, **auto-generates `VLLM_API_KEY`**, and **auto-generates the `/admin/*` Basic Auth password**. Both are printed once at the end — save them. Then:
 ```bash
-KEY=$(openssl rand -hex 32)
-sed -i "s|^VLLM_API_KEY=.*|VLLM_API_KEY=$KEY|" /workspace/envs/vllm.env
-echo "VLLM_API_KEY=$KEY"     # save this too
+exec bash                    # picks up the supervisorctl alias and HF_HOME from .bashrc
 ```
 
-Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-quantised MoE, fits A40 with headroom). If you want a different first-run model, `nano /workspace/envs/vllm.env`.
+Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-quantised MoE, fits A40 with headroom). To use a different first-run model, `nano /workspace/envs/vllm.env` before step 4.
 
-> **`/workspace` persists across pod terminations** (it's a Runpod network volume). If you re-deploy onto an existing volume, `setup.sh` will *not* overwrite your `vllm.env`, `control_plane.env`, or `models.yaml` — those keep your previous edits. To start truly clean: `rm -rf /workspace/envs /workspace/ops /workspace/traefik/users.htpasswd` *before* running `setup.sh`. (The HF cache at `/workspace/hf_cache` is worth keeping — that's the expensive bit to re-download.)
+> **`/workspace` persists across pod terminations** (it's a Runpod network volume). On a redeploy, `setup.sh` will *not* overwrite your existing `vllm.env`, `control_plane.env`, `models.yaml`, or `users.htpasswd` — those keep your previous edits, including the auto-generated keys. To start truly clean: `rm -rf /workspace/envs /workspace/ops /workspace/traefik/users.htpasswd` *before* running `setup.sh`. Keep `/workspace/hf_cache` — that's the expensive download.
 
-### 4. Set HF_TOKEN — strongly recommended
-
-Required only for *gated* models, but **strongly recommended for every deploy**: unauthenticated HF downloads are rate-limited to ~10 MB/s — a 17 GB download takes ~30 min anonymous vs. ~3 min with a token.
-
-Grab a read-only token at https://huggingface.co/settings/tokens, then:
-
-```bash
-TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
-echo "HF_TOKEN=$TOKEN" >> /workspace/envs/vllm.env   # run_vllm.sh sources this, so vllm sees it
-echo "export HF_TOKEN=$TOKEN" >> ~/.bashrc           # convenience for interactive `hf` CLI use
-export HF_TOKEN=$TOKEN
-```
-
-Or interactive: `hf auth login`.
-
-### 5. Start everything
+### 4. Start everything
 ```bash
 /workspace/bin/bootstrap.sh
+supervisorctl status                  # all three RUNNING
+supervisorctl tail -f vllm stderr     # Ctrl-C when you see "Application startup complete"
 ```
-First vLLM boot takes 1–3 min (weights download to `/workspace/hf_cache`). Watch:
-```bash
-supervisorctl tail -f vllm stderr  # Ctrl-C when you see "Application startup complete"
-supervisorctl status           # vllm, control_plane, traefik all RUNNING
-```
+First boot downloads the model into `/workspace/hf_cache` — `~3 min` with `HF_TOKEN`, `~30 min` without. Then a few more minutes for weight load + CUDA graph compile.
 
-### 6. In the Runpod console — expose port 8000 ONLY
+### 5. In the Runpod console — expose port 8000 ONLY
 Pod settings → **Exposed HTTP Ports** → add `8000`. **Do not** expose `18001` (vLLM) or `8002` (control plane) — those are loopback-only by design. Runpod gives you a public URL: `https://<pod-id>-8000.proxy.runpod.net`.
 
 If the pod was already running when you added the port, restart it for the proxy URL to appear.
 
-### 7. From your laptop — smoke test
+### 6. From your laptop — smoke test
 ```bash
 URL=https://<pod-id>-8000.proxy.runpod.net
 
