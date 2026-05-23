@@ -32,7 +32,7 @@ cd deploying_llm_runpod
 Anonymous Hugging Face downloads are rate-limited to ~10 MB/s. A free-tier token gets the full CDN speed — a 17 GB model takes ~3 min with a token vs. ~30 min without. Grab one at https://huggingface.co/settings/tokens (read-only is enough), then:
 ```bash
 cp .env.example .env
-nano .env                    # set HF_TOKEN=hf_xxx... (and optionally VLLM_API_KEY)
+nano .env                    # set HF_TOKEN=hf_xxx... (and optionally VLLM_API_KEY, MODEL, MAX_LEN)
 ```
 `.env` is gitignored, so secrets never leave the pod. `setup.sh` reads it on every run and bakes `HF_TOKEN` into `/workspace/envs/vllm.env` so `run_vllm.sh` sees it. If you'd rather pass the token one-off via the shell: `export HF_TOKEN=hf_xxx` before step 3 — shell env wins over `.env`. Skip entirely and you'll just wait ~30 min on the first model download.
 
@@ -45,7 +45,7 @@ This installs apt deps, creates the two venvs, pulls Traefik, drops configs into
 exec bash                    # picks up the supervisorctl alias and HF_HOME from .bashrc
 ```
 
-Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-quantised MoE, fits A40 with headroom). To use a different first-run model, `nano /workspace/envs/vllm.env` before step 4.
+Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-quantised MoE, fits A40 with headroom). To use a different first-run model, set `MODEL=` (and optionally `MAX_LEN=`) in `.env` before step 3 — `setup.sh` bakes it into `/workspace/envs/vllm.env` on first creation. (Equivalently, `nano /workspace/envs/vllm.env` before step 4.) On an already-running pod, switch live with `./switch_model.sh` instead.
 
 > **`/workspace` persists across pod terminations** (it's a Runpod network volume). On a redeploy, `setup.sh` will *not* overwrite your existing `vllm.env`, `control_plane.env`, `models.yaml`, or `users.htpasswd` — those keep your previous edits, including the auto-generated keys. To start truly clean: `rm -rf /workspace/envs /workspace/ops /workspace/traefik/users.htpasswd` *before* running `setup.sh`. Keep `/workspace/hf_cache` — that's the expensive download.
 

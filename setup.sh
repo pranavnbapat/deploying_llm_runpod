@@ -190,12 +190,23 @@ if [ ! -f "$ENV_FILE" ]; then
   KEY="${VLLM_API_KEY:-$(openssl rand -hex 32)}"
   sed -i "s|^VLLM_API_KEY=.*|VLLM_API_KEY=$KEY|" "$ENV_FILE"
   GENERATED_VLLM_KEY="$KEY"
+  # Optional: override the model (and its context length) from .env / env var.
+  # When unset, the default baked into vllm.env.example is kept. Use | as the
+  # sed delimiter — model ids contain /. Only applies on first creation; switch
+  # a live pod with ./switch_model.sh instead.
+  if [ -n "${MODEL:-}" ]; then
+    sed -i "s|^MODEL=.*|MODEL=$MODEL|" "$ENV_FILE"
+  fi
+  if [ -n "${MAX_LEN:-}" ]; then
+    sed -i "s|^MAX_LEN=.*|MAX_LEN=$MAX_LEN|" "$ENV_FILE"
+  fi
   # Optional: bake in HF_TOKEN if the operator passed it via env. Massively
   # speeds up the model download (anonymous requests are rate-limited).
   if [ -n "${HF_TOKEN:-}" ]; then
     echo "HF_TOKEN=$HF_TOKEN" >> "$ENV_FILE"
   fi
-  echo "Created $ENV_FILE (VLLM_API_KEY auto-generated; HF_TOKEN $([ -n "${HF_TOKEN:-}" ] && echo set || echo unset))."
+  MODEL_SET=$(grep -E '^MODEL=' "$ENV_FILE" | head -1 | cut -d= -f2-)
+  echo "Created $ENV_FILE (model=$MODEL_SET; VLLM_API_KEY auto-generated; HF_TOKEN $([ -n "${HF_TOKEN:-}" ] && echo set || echo unset))."
 fi
 if [ ! -f "$CP_ENV_FILE" ]; then
   install -m 0600 "$FILES/envs/control_plane.env.example" "$CP_ENV_FILE"
