@@ -200,6 +200,11 @@ if [ ! -f "$ENV_FILE" ]; then
   if [ -n "${MAX_LEN:-}" ]; then
     sed -i "s|^MAX_LEN=.*|MAX_LEN=$MAX_LEN|" "$ENV_FILE"
   fi
+  # Concurrency: how many sequences vLLM batches at once. Size it against the
+  # KV-cache budget (MAX_NUM_SEQS × MAX_LEN must fit free VRAM after weights).
+  if [ -n "${MAX_NUM_SEQS:-}" ]; then
+    sed -i "s|^MAX_NUM_SEQS=.*|MAX_NUM_SEQS=$MAX_NUM_SEQS|" "$ENV_FILE"
+  fi
   # Optional: bake in HF_TOKEN if the operator passed it via env. Massively
   # speeds up the model download (anonymous requests are rate-limited).
   if [ -n "${HF_TOKEN:-}" ]; then

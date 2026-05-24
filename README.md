@@ -34,7 +34,7 @@ Anonymous Hugging Face downloads are rate-limited to ~10 MB/s. A free-tier token
 cp .env.example .env
 nano .env                    # set HF_TOKEN=hf_xxx... (and optionally VLLM_API_KEY, MODEL, MAX_LEN)
 ```
-`.env` is gitignored, so secrets never leave the pod. `setup.sh` reads it on every run and bakes `HF_TOKEN` into `/workspace/envs/vllm.env` so `run_vllm.sh` sees it. If you'd rather pass the token one-off via the shell: `export HF_TOKEN=hf_xxx` before step 3 — shell env wins over `.env`. Skip entirely and you'll just wait ~30 min on the first model download.
+`.env` is gitignored, so secrets never leave the pod. Beyond `HF_TOKEN`, it also accepts `VLLM_API_KEY` (pre-set the inference token instead of letting setup auto-generate one) and `MODEL` / `MAX_LEN` (the first-run model id and its context length). `setup.sh` reads `.env` on every run and bakes these into `/workspace/envs/vllm.env` **the first time that file is created**, so `run_vllm.sh` picks them up. Leave `MODEL` empty to keep the default below. If you'd rather pass values one-off via the shell: `export HF_TOKEN=hf_xxx` before step 3 — shell env wins over `.env`. Skip entirely and you'll just wait ~30 min on the first model download.
 
 ### 3. Run setup
 ```bash
