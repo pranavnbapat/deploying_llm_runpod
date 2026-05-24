@@ -57,6 +57,13 @@ supervisorctl tail -f vllm stderr     # Ctrl-C when you see "Application startup
 ```
 First boot downloads the model into `/workspace/hf_cache` — `~3 min` with `HF_TOKEN`, `~30 min` without. Then a few more minutes for weight load + CUDA graph compile.
 
+When the log shows `Application startup complete`, confirm vLLM is actually serving — still on the pod, over loopback. vLLM enforces the API key even on `127.0.0.1`, so pass the token from `vllm.env`:
+```bash
+KEY=$(grep ^VLLM_API_KEY= /workspace/envs/vllm.env | cut -d= -f2)
+curl -s -H "Authorization: Bearer $KEY" http://127.0.0.1:18001/v1/models
+```
+A JSON body listing the id `current` means it's healthy and ready to expose. `Connection refused` means it's still warming up — re-check `supervisorctl status` and `supervisorctl tail -200 vllm stderr`.
+
 ### 5. In the Runpod console — expose port 8000 ONLY
 Pod settings → **Exposed HTTP Ports** → add `8000`. **Do not** expose `18001` (vLLM) or `8002` (control plane) — those are loopback-only by design. Runpod gives you a public URL: `https://<pod-id>-8000.proxy.runpod.net`.
 
@@ -98,6 +105,61 @@ git pull
 supervisorctl reread && supervisorctl update
 ```
 Generated state (`vllm.env`, `users.htpasswd`, `models.yaml`, the HF cache) is preserved across `setup.sh` re-runs.
+
+---
+
+## Verifying & accessing the endpoint
+
+Check in order — **local first, then public**. Each step gates the next.
+
+### 1. On the pod — is it serving?
+```bash
+supervisorctl status                                  # vllm, control_plane, traefik all RUNNING
+supervisorctl tail -200 vllm | grep "Application startup complete"
+
+# Loopback inference (vLLM enforces the API key even on 127.0.0.1)
+KEY=$(grep ^VLLM_API_KEY= /workspace/envs/vllm.env | cut -d= -f2)
+curl -s -H "Authorization: Bearer $KEY" http://127.0.0.1:18001/v1/models
+```
+JSON listing the id `current` = healthy. Only then bother exposing the port.
+
+### 2. Expose port 8000
+Runpod console → **Exposed HTTP Ports** → add `8000` **only** (never `18001` or `8002`). You get `https://<pod-id>-8000.proxy.runpod.net`. `<pod-id>` comes from the Runpod **dashboard** — *not* the container hostname in your shell prompt (e.g. `root@fd5cda677826`).
+
+### 3. Credentials (printed once by `setup.sh`)
+| Surface | Credential | Recover it |
+|---------|-----------|-----------|
+| `/v1/*` (inference) | `VLLM_API_KEY` → `Authorization: Bearer <key>` | `grep ^VLLM_API_KEY= /workspace/envs/vllm.env` |
+| everything else | Basic Auth `admin:<password>` | reset: `htpasswd -B /workspace/traefik/users.htpasswd admin` |
+
+### 4. From your laptop — what to hit
+All paths below are appended to the public base `https://<pod-id>-8000.proxy.runpod.net`:
+
+| Path | Auth | Purpose |
+|------|------|---------|
+| `POST /v1/chat/completions` | Bearer | Chat inference (the main one) |
+| `POST /v1/completions` | Bearer | Text completion |
+| `GET /v1/models` | Bearer | Confirms the alias `current` is served |
+| `GET /admin/docs` | Basic | **Control-plane Swagger UI — clickable in a browser** |
+| `GET /admin/models/loaded` | Basic | What vLLM is actually serving (live probe) |
+| `GET /admin/models/available` | Basic | Registry + models cached on disk |
+| `POST /admin/models/switch` | Basic | Swap the loaded model |
+| `GET /admin/status` | Basic | `supervisorctl status` over HTTP |
+| `GET /admin/logs/{vllm\|traefik\|control_plane}?lines=200&stderr=true` | Basic | Tail logs over HTTP |
+| `GET /docs`, `/health`, `/metrics`, `/version` | Basic | vLLM's own pages (full `/admin` list under *Control plane endpoints* below) |
+
+```bash
+URL=https://<pod-id>-8000.proxy.runpod.net
+
+# Inference — always "model":"current" (the SERVED_MODEL_NAME alias; survives model switches)
+curl -H "Authorization: Bearer $VLLM_API_KEY" -H "Content-Type: application/json" \
+     -d '{"model":"current","messages":[{"role":"user","content":"Hello in one sentence."}]}' \
+     "$URL/v1/chat/completions"
+
+# Control plane
+curl -u admin:<password> "$URL/admin/models/loaded" | jq
+```
+Easiest browser entry point: open `…/admin/docs`, enter `admin` / `<password>` at the login dialog, then **Try it out** works for every `/admin` endpoint.
 
 ---
 

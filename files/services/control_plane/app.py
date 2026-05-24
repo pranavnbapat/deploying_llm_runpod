@@ -199,9 +199,14 @@ async def loaded() -> dict:
 
     serving: Optional[list[str]] = None
     error: Optional[str] = None
+    # vLLM runs with --api-key, so the probe must authenticate too. Without the
+    # Bearer header /v1/models returns 401 and we'd wrongly report the engine as
+    # unreachable. The key lives in the same env file we just parsed.
+    api_key = env.get("VLLM_API_KEY")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{VLLM_URL}/v1/models")
+            r = await client.get(f"{VLLM_URL}/v1/models", headers=headers)
             if r.status_code == 200:
                 serving = [m["id"] for m in r.json().get("data", [])]
             else:
