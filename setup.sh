@@ -109,6 +109,11 @@ if [ ! -d "$VENV" ]; then
 fi
 # VLLM_PIN was set by the preflight block above (empty for CUDA-13 drivers,
 # '<0.20' for CUDA-12 drivers, or whatever the operator overrode).
+cat <<EOF
+    Installing vLLM can look stuck while uv downloads/prepares large CUDA wheels.
+    On CUDA 13 hosts this is commonly several GB (torch, cudnn, cublas, flashinfer).
+    If interrupted, re-run ./setup.sh; uv will reuse any completed downloads.
+EOF
 uv pip install --python "$VENV/bin/python" --upgrade "vllm${VLLM_PIN}" huggingface_hub
 
 # Sanity-check: both torch.cuda allocation AND vllm._C must work. Lazy init

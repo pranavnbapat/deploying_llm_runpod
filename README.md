@@ -38,9 +38,9 @@ nano .env                    # set HF_TOKEN=hf_xxx... (and optionally VLLM_API_K
 
 ### 3. Run setup
 ```bash
-./setup.sh                   # ~3–5 min
+./setup.sh                   # first vLLM install can take several minutes
 ```
-This installs apt deps, creates the two venvs, pulls Traefik, drops configs into `/workspace`, **auto-generates `VLLM_API_KEY`**, and **auto-generates the `/admin/*` Basic Auth password**. Both are printed once at the end — save them. Then:
+This installs apt deps, creates the two venvs, pulls Traefik, drops configs into `/workspace`, **auto-generates `VLLM_API_KEY`**, and **auto-generates the `/admin/*` Basic Auth password**. On CUDA 13 hosts, the vLLM step downloads/prepares several GB of CUDA wheels (`torch`, `cudnn`, `cublas`, `flashinfer`, etc.), so uv can appear quiet or stuck for a while. If the install is interrupted, just re-run `./setup.sh`; uv reuses completed downloads from its cache. Both generated credentials are printed once at the end — save them. Then:
 ```bash
 exec bash                    # picks up the supervisorctl alias and HF_HOME from .bashrc
 ```
@@ -407,6 +407,7 @@ The Traefik prefixes `/v1` (vLLM) and `/admin` (control plane) are already taken
 
 ## Troubleshooting
 
+- **`./setup.sh` looks stuck at `Preparing packages...`** — this is usually the vLLM wheel install, not the model download. On CUDA 13 hosts, uv may be preparing several GB of dependencies. Check activity with `htop`, `df -h /workspace /root`, or `du -sh ~/.cache/uv /workspace/envs/vllm 2>/dev/null`; if you already pressed Ctrl-C, re-run `./setup.sh` and it will resume from cached completed downloads.
 - **`vllm` keeps restarting** — `supervisorctl tail -200 vllm stderr`. Common: missing `MODEL` / `VLLM_API_KEY` in env file, OOM (lower `MAX_LEN` or `GPU_UTIL`), gated model without `hf auth login`.
 - **Public URL returns 502** — Traefik is up but vLLM isn't ready yet. `supervisorctl status` and tail vllm logs; cold start can take a minute.
 - **`/v1/models` returns 401** — missing/wrong `Authorization: Bearer <key>` header.
