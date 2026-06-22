@@ -338,10 +338,12 @@ In `/workspace/traefik/dynamic/vllm.yml`:
 
 | Middleware | Setting | Tweak when |
 |------------|---------|------------|
-| `vllm-ratelimit` | `average: 2` req/s, `burst: 5` | Tighten if you see abuse, loosen for trusted callers. |
-| `vllm-inflight` | `amount: 1` | Keep at 1 for a single GPU. Raise only if you've measured headroom. |
+| `vllm-ratelimit` | `average: 30` req/s, `burst: 60` | Sized for a multi-user Arena session. The source is the calling service (not the end user), so this bucket is effectively global; per-user limiting lives in the frontend. Lower it if this pod has a single trusted caller. |
+| `vllm-inflight` | `amount: 32` | **Must sit ABOVE your peak concurrent users** — `inFlightReq` returns 429 above `amount`, it does NOT queue. Keep vLLM's `MAX_NUM_SEQS` (in `vllm.env`) as the real GPU-capacity limiter; vLLM queues gracefully past it. Setting this to 1 serialises everything and 429s concurrent callers. |
 
 Traefik watches the dynamic dir — saving the file applies changes without restarting Traefik.
+
+> **Concurrency note:** for N simultaneous users with no errors, set `MAX_NUM_SEQS` (vLLM, in `.env`/`vllm.env`) to the GPU's batch capacity and `vllm-inflight amount` *above* N. vLLM batches up to `MAX_NUM_SEQS` and queues the rest; Traefik must not reject before requests reach it.
 
 ---
 

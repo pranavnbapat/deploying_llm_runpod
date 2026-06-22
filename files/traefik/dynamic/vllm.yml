@@ -35,14 +35,26 @@ http:
           - url: "http://127.0.0.1:18001"
 
   middlewares:
+    # NOTE: setup.sh re-derives `amount`, `average` and `burst` below from
+    # MAX_NUM_SEQS on every run, so the GPU's batch size and the proxy caps can't
+    # drift apart. The literals here are just the standalone defaults.
+    #
     # Token-bucket rate limit. average = sustained req/s, burst = short spike allowance.
+    # Sized for an Arena session (~20-30 testers). NOTE: the source is the
+    # farm_assistant instance, so this bucket is effectively global, not per-user
+    # (per-user throttling already happens in the frontend). Raised from 2/5 so a
+    # simultaneous burst of testers isn't turned into 429s.
     vllm-ratelimit:
       rateLimit:
-        average: 2
-        burst: 5
+        average: 30
+        burst: 60
 
-    # GPU concurrency cap. amount: 1 = one in-flight request at a time per backend.
-    # Critical for single-GPU vLLM — pile-ups hurt latency badly and can OOM.
+    # Proxy concurrency cap. IMPORTANT: Traefik's inFlightReq REJECTS with 429
+    # above `amount` — it does NOT queue. So this must sit ABOVE the expected
+    # concurrent-user peak, letting requests reach vLLM, which DOES queue
+    # gracefully (vLLM batches up to --max-num-seqs and queues the rest, no error).
+    # Keep amount > peak concurrency, and let vLLM's --max-num-seqs be the real
+    # GPU-capacity limiter. (Was 1, which serialised everything and 429'd the rest.)
     vllm-inflight:
       inFlightReq:
-        amount: 1
+        amount: 32

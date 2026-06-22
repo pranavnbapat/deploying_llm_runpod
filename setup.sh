@@ -180,6 +180,8 @@ echo "==> copy configs into /workspace"
 install -m 0755 "$FILES/bin/run_vllm.sh"           "$WORKSPACE/bin/run_vllm.sh"
 install -m 0755 "$FILES/bin/run_control_plane.sh"  "$WORKSPACE/bin/run_control_plane.sh"
 install -m 0755 "$FILES/bin/bootstrap.sh"          "$WORKSPACE/bin/bootstrap.sh"
+install -m 0755 "$FILES/bin/capacity_report.sh"    "$WORKSPACE/bin/capacity_report.sh"
+install -m 0755 "$FILES/bin/estimate_capacity.py"  "$WORKSPACE/bin/estimate_capacity.py"
 install -m 0644 "$FILES/ops/supervisord.conf"            "$WORKSPACE/ops/supervisord.conf"
 install -m 0644 "$FILES/traefik/traefik.yml"             "$WORKSPACE/traefik/traefik.yml"
 install -m 0644 "$FILES/traefik/dynamic/vllm.yml"        "$WORKSPACE/traefik/dynamic/vllm.yml"
@@ -187,6 +189,27 @@ install -m 0644 "$FILES/traefik/dynamic/control_plane.yml" "$WORKSPACE/traefik/d
 install -m 0644 "$FILES/services/control_plane/app.py"   "$WORKSPACE/services/control_plane/app.py"
 install -m 0644 "$FILES/services/control_plane/requirements.txt" \
                                                          "$WORKSPACE/services/control_plane/requirements.txt"
+
+# --- Concurrency planning -----------------------------------------------------
+# MAX_NUM_SEQS is "how many users vLLM serves in parallel"; MAX_LEN is the
+# per-request context. They trade against the same KV-cache pool. On first setup,
+# if these weren't supplied via .env / env vars and we're on a terminal, show a
+# rough capacity estimate and prompt. In automation (no TTY) the .env values are
+# used as-is and nothing is prompted.
+if [ ! -f "$ENV_FILE" ] && [ -t 0 ] && { [ -z "${MAX_LEN:-}" ] || [ -z "${MAX_NUM_SEQS:-}" ]; }; then
+  MODEL_FOR_EST="${MODEL:-stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ}"
+  echo "==> concurrency planning for $MODEL_FOR_EST"
+  "$VENV/bin/python" "$FILES/bin/estimate_capacity.py" \
+    --model "$MODEL_FOR_EST" --gpu-util "${GPU_UTIL:-0.90}" || true
+  if [ -z "${MAX_LEN:-}" ]; then
+    read -r -p "    Max context length per request [16384]: " _ans
+    export MAX_LEN="${_ans:-16384}"
+  fi
+  if [ -z "${MAX_NUM_SEQS:-}" ]; then
+    read -r -p "    Concurrent users to serve in parallel [8]: " _ans
+    export MAX_NUM_SEQS="${_ans:-8}"
+  fi
+fi
 
 if [ ! -f "$ENV_FILE" ]; then
   install -m 0600 "$FILES/envs/vllm.env.example" "$ENV_FILE"
@@ -218,6 +241,24 @@ if [ ! -f "$ENV_FILE" ]; then
   MODEL_SET=$(grep -E '^MODEL=' "$ENV_FILE" | head -1 | cut -d= -f2-)
   echo "Created $ENV_FILE (model=$MODEL_SET; VLLM_API_KEY auto-generated; HF_TOKEN $([ -n "${HF_TOKEN:-}" ] && echo set || echo unset))."
 fi
+
+# Keep Traefik's proxy caps in sync with vLLM's batch size. inFlightReq REJECTS
+# (429) above `amount` — it does NOT queue — so it must sit ABOVE MAX_NUM_SEQS,
+# letting vLLM (which queues past its batch, no error) be the real limiter.
+# Re-derived on every run so the proxy can never silently throttle below the GPU.
+VLLM_YML="$WORKSPACE/traefik/dynamic/vllm.yml"
+EFFECTIVE_SEQS=$(grep -E '^MAX_NUM_SEQS=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2)
+EFFECTIVE_SEQS=${EFFECTIVE_SEQS:-1}
+INFLIGHT=$(( EFFECTIVE_SEQS * 2 + 4 ))
+RL_AVG=$(( EFFECTIVE_SEQS * 2 )); [ "$RL_AVG" -lt 10 ] && RL_AVG=10
+RL_BURST=$(( RL_AVG * 2 ))
+sed -i \
+  -e "s|^\([[:space:]]*amount:\).*|\1 $INFLIGHT|" \
+  -e "s|^\([[:space:]]*average:\).*|\1 $RL_AVG|" \
+  -e "s|^\([[:space:]]*burst:\).*|\1 $RL_BURST|" \
+  "$VLLM_YML"
+echo "==> Traefik proxy caps synced to MAX_NUM_SEQS=$EFFECTIVE_SEQS (inflight=$INFLIGHT, rate=${RL_AVG}/${RL_BURST} req/s)"
+
 if [ ! -f "$CP_ENV_FILE" ]; then
   install -m 0600 "$FILES/envs/control_plane.env.example" "$CP_ENV_FILE"
   echo "Created $CP_ENV_FILE (defaults are fine; edit only if you change ports/prefix)."
@@ -275,7 +316,9 @@ if ! grep -q '^HF_TOKEN=' "$ENV_FILE" 2>/dev/null; then
   echo "       a 17 GB model takes ~3 min instead of ~30 min."
   echo "  2. $WORKSPACE/bin/bootstrap.sh   # start everything"
   echo "  3. supervisorctl status          # vllm + control_plane + traefik all RUNNING"
+  echo "  4. $WORKSPACE/bin/capacity_report.sh  # confirm achieved vs requested concurrency"
 else
   echo "  1. $WORKSPACE/bin/bootstrap.sh   # start everything"
   echo "  2. supervisorctl status          # vllm + control_plane + traefik all RUNNING"
+  echo "  3. $WORKSPACE/bin/capacity_report.sh  # confirm achieved vs requested concurrency"
 fi
