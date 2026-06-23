@@ -320,10 +320,10 @@ if ! grep -q '^HF_TOKEN=' "$ENV_FILE" 2>/dev/null; then
   echo "     — Anonymous HF downloads are rate-limited to ~10 MB/s. With a token,"
   echo "       a 17 GB model takes ~3 min instead of ~30 min."
   echo "  2. $WORKSPACE/bin/bootstrap.sh   # start everything"
-  echo "  3. supervisorctl status          # vllm + control_plane + traefik all RUNNING"
+  echo "  3. supervisorctl -c $WORKSPACE/ops/supervisord.conf status   # vllm + control_plane + traefik all RUNNING"
   echo "  4. $WORKSPACE/bin/capacity_report.sh  # confirm achieved vs requested concurrency"
 else
   echo "  1. $WORKSPACE/bin/bootstrap.sh   # start everything"
-  echo "  2. supervisorctl status          # vllm + control_plane + traefik all RUNNING"
+  echo "  2. supervisorctl -c $WORKSPACE/ops/supervisord.conf status   # vllm + control_plane + traefik all RUNNING"
   echo "  3. $WORKSPACE/bin/capacity_report.sh  # confirm achieved vs requested concurrency"
 fi
