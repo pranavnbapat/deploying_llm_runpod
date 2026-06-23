@@ -35,6 +35,8 @@ CP_ENV_FILE=$WORKSPACE/envs/control_plane.env
 MODELS_YAML=$WORKSPACE/ops/models.yaml
 HF_CACHE=$WORKSPACE/hf_cache
 TRAEFIK_BIN=$WORKSPACE/bin/traefik
+# Used when neither TRAEFIK_TAG is set nor the GitHub API lookup succeeds.
+TRAEFIK_FALLBACK_TAG="${TRAEFIK_FALLBACK_TAG:-v3.7.5}"
 
 echo "==> driver / CUDA preflight"
 # vLLM's PyPI wheel ships its own precompiled CUDA extension. Picking the wrong
@@ -160,9 +162,12 @@ PY
 )
   fi
   if [ -z "$TAG" ]; then
-    echo "ERROR: Could not determine Traefik version from GitHub API." >&2
-    echo "       Override manually: TRAEFIK_TAG=v3.5.0 ./setup.sh" >&2
-    exit 1
+    # GitHub's API lookup commonly fails on fresh pods (unauthenticated rate
+    # limit is per-IP, and Runpod's shared NAT IPs are often exhausted). Fall
+    # back to a known-good tag rather than aborting the whole bootstrap.
+    TAG="$TRAEFIK_FALLBACK_TAG"
+    echo "    GitHub API lookup failed; falling back to $TAG" >&2
+    echo "    (override with TRAEFIK_TAG=vX.Y.Z ./setup.sh if you need another)" >&2
   fi
   echo "    fetching traefik $TAG"
   curl -fL -o traefik.tar.gz \
