@@ -103,6 +103,11 @@ fi
 # uv installs into ~/.local/bin. Older installers wrote a `~/.local/bin/env`
 # script to source; newer ones don't. Just put the dir on PATH directly.
 export PATH="$HOME/.local/bin:$PATH"
+# Big CUDA wheels (torch, cudnn, cublas, nvshmem, flashinfer) are several GB
+# each and routinely blow past uv's stingy 30s default on RunPod's link, dying
+# with "network timeout". Give downloads room and let uv retry transient drops.
+export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-600}"
+export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-4}"
 uv --version
 
 echo "==> vllm venv"
