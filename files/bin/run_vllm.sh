@@ -7,14 +7,9 @@
 set -euo pipefail
 
 ENV_FILE=/workspace/envs/vllm.env
-VENV=/workspace/envs/vllm
 
 if [ ! -f "$ENV_FILE" ]; then
     echo "Missing $ENV_FILE" >&2
-    exit 1
-fi
-if [ ! -d "$VENV" ]; then
-    echo "Missing venv at $VENV — run setup.sh" >&2
     exit 1
 fi
 
@@ -22,6 +17,15 @@ set -a
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 set +a
+
+# Venv location is written into vllm.env by setup.sh (VLLM_VENV). It may live on
+# local disk rather than /workspace — in which case a cold pod restart wipes it
+# and setup.sh must be re-run. Fall back to the legacy default for old env files.
+VENV="${VLLM_VENV:-/workspace/envs/vllm}"
+if [ ! -d "$VENV" ]; then
+    echo "Missing venv at $VENV — run setup.sh" >&2
+    exit 1
+fi
 
 # shellcheck source=/dev/null
 source "$VENV/bin/activate"

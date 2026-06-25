@@ -28,8 +28,17 @@ if [ -f "$REPO_DIR/.env" ]; then
 fi
 
 WORKSPACE=/workspace
-VENV=$WORKSPACE/envs/vllm
-CP_VENV=$WORKSPACE/envs/control_plane
+# Where the Python venvs live. Default is the persistent /workspace volume so
+# they survive pod restarts. But on pods whose /workspace is a slow network
+# filesystem (e.g. RunPod's MooseFS, `mfs#...` in `df -h /workspace`), building
+# a venv there is pathologically slow — torch/vllm unpack into hundreds of
+# thousands of small files and every write is a network round-trip. On those
+# hosts, point VENV_ROOT at local disk (e.g. VENV_ROOT=/opt/envs ./setup.sh):
+# the build runs at local-disk speed, at the cost of being wiped on a cold pod
+# restart — so re-run setup.sh after a cold start to rebuild the venvs.
+VENV_ROOT="${VENV_ROOT:-$WORKSPACE/envs}"
+VENV=$VENV_ROOT/vllm
+CP_VENV=$VENV_ROOT/control_plane
 ENV_FILE=$WORKSPACE/envs/vllm.env
 CP_ENV_FILE=$WORKSPACE/envs/control_plane.env
 MODELS_YAML=$WORKSPACE/ops/models.yaml
@@ -88,6 +97,7 @@ echo "==> directory layout"
 mkdir -p \
   "$WORKSPACE/bin" \
   "$WORKSPACE/envs" \
+  "$VENV_ROOT" \
   "$HF_CACHE" \
   "$WORKSPACE/logs" \
   "$WORKSPACE/ops" \
@@ -108,6 +118,11 @@ export PATH="$HOME/.local/bin:$PATH"
 # with "network timeout". Give downloads room and let uv retry transient drops.
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-600}"
 export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-4}"
+# Keep uv's cache on the SAME filesystem as the venvs. uv installs by hardlinking
+# from the cache into the venv; if they're on different filesystems it silently
+# falls back to copying every file, which is exactly the slow path on a network
+# /workspace. Co-locating them means a local VENV_ROOT gets fast local hardlinks.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$VENV_ROOT/.uv-cache}"
 uv --version
 
 echo "==> vllm venv"
@@ -252,6 +267,15 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "Created $ENV_FILE (model=$MODEL_SET; VLLM_API_KEY auto-generated; HF_TOKEN $([ -n "${HF_TOKEN:-}" ] && echo set || echo unset))."
 fi
 
+# Persist the resolved venv path so run_vllm.sh (launched by supervisord, which
+# never sees setup.sh's VENV_ROOT) activates the right one — including a local,
+# non-/workspace venv. Idempotent: rewrite the line if present, else append.
+if grep -q '^VLLM_VENV=' "$ENV_FILE" 2>/dev/null; then
+  sed -i "s|^VLLM_VENV=.*|VLLM_VENV=$VENV|" "$ENV_FILE"
+else
+  echo "VLLM_VENV=$VENV" >> "$ENV_FILE"
+fi
+
 # Keep Traefik's proxy caps in sync with vLLM's batch size. inFlightReq REJECTS
 # (429) above `amount` — it does NOT queue — so it must sit ABOVE MAX_NUM_SEQS,
 # letting vLLM (which queues past its batch, no error) be the real limiter.
@@ -272,6 +296,12 @@ echo "==> Traefik proxy caps synced to MAX_NUM_SEQS=$EFFECTIVE_SEQS (inflight=$I
 if [ ! -f "$CP_ENV_FILE" ]; then
   install -m 0600 "$FILES/envs/control_plane.env.example" "$CP_ENV_FILE"
   echo "Created $CP_ENV_FILE (defaults are fine; edit only if you change ports/prefix)."
+fi
+# Persist the resolved control_plane venv path (see VLLM_VENV note above).
+if grep -q '^CONTROL_PLANE_VENV=' "$CP_ENV_FILE" 2>/dev/null; then
+  sed -i "s|^CONTROL_PLANE_VENV=.*|CONTROL_PLANE_VENV=$CP_VENV|" "$CP_ENV_FILE"
+else
+  echo "CONTROL_PLANE_VENV=$CP_VENV" >> "$CP_ENV_FILE"
 fi
 if [ ! -f "$MODELS_YAML" ]; then
   install -m 0644 "$FILES/ops/models.yaml.example" "$MODELS_YAML"
@@ -296,6 +326,15 @@ add_line "export HF_HOME=$HF_CACHE"
 
 echo
 echo "Setup complete."
+case "$VENV_ROOT" in
+  "$WORKSPACE"/*) ;;
+  *)
+    echo
+    echo "NOTE: venvs are at $VENV_ROOT (off the persistent /workspace volume)."
+    echo "      They are wiped on a cold pod restart — re-run ./setup.sh after one"
+    echo "      (it's fast: downloads are cached and writes are local)."
+    ;;
+esac
 echo
 
 if [ -n "$GENERATED_PW" ] || [ -n "$GENERATED_VLLM_KEY" ]; then

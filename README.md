@@ -49,6 +49,8 @@ Default `MODEL` is `stelterlab/Qwen3-30B-A3B-Instruct-2507-AWQ` (~17 GB, AWQ-qua
 
 > **`/workspace` persists across pod terminations** (it's a Runpod network volume). On a redeploy, `setup.sh` will *not* overwrite your existing `vllm.env`, `control_plane.env`, `models.yaml`, or `users.htpasswd` — those keep your previous edits, including the auto-generated keys. To start truly clean: `rm -rf /workspace/envs /workspace/ops /workspace/traefik/users.htpasswd` *before* running `setup.sh`. Keep `/workspace/hf_cache` — that's the expensive download.
 
+> **Slow `/workspace`? Build the venvs on local disk.** Some pods back `/workspace` with a network filesystem (check `df -h /workspace` — a `mfs#...` mount is RunPod's MooseFS). Building a venv there is pathologically slow: `torch`/`vllm` unpack into hundreds of thousands of small files and every write is a network round-trip, so `setup.sh` can appear frozen at `Preparing packages...` for tens of minutes even though the network download itself is fast. Fix it by putting the venvs on the pod's local disk: `VENV_ROOT=/opt/envs ./setup.sh`. The build then runs at local-disk speed (uv also co-locates its cache there so installs hardlink instead of copying). The trade-off: local disk is wiped on a cold pod restart, so you must re-run `VENV_ROOT=/opt/envs ./setup.sh` after one (it's quick — downloads are cached, writes are local). The resolved venv path is persisted into `vllm.env`/`control_plane.env`, so the runners always find it. Default (`VENV_ROOT` unset) keeps the venvs on `/workspace` as before.
+
 ### 4. Start everything
 ```bash
 /workspace/bin/bootstrap.sh
@@ -94,7 +96,7 @@ The container disk wipes, but `/workspace` (network volume) persists — venvs, 
 ```bash
 /workspace/bin/bootstrap.sh
 ```
-No `setup.sh` re-run needed.
+No `setup.sh` re-run needed — **unless** you built the venvs on local disk with `VENV_ROOT` (see "Slow `/workspace`?" above). Those live on the container disk and are wiped on restart, so first re-run `VENV_ROOT=/opt/envs ./setup.sh`, then `bootstrap.sh`.
 
 ### Updating the deployment later
 If you push a new version of this repo:
@@ -409,7 +411,7 @@ The Traefik prefixes `/v1` (vLLM) and `/admin` (control plane) are already taken
 
 ## Troubleshooting
 
-- **`./setup.sh` looks stuck at `Preparing packages...`** — this is usually the vLLM wheel install, not the model download. On CUDA 13 hosts, uv may be preparing several GB of dependencies. Check activity with `htop`, `df -h /workspace /root`, or `du -sh ~/.cache/uv /workspace/envs/vllm 2>/dev/null`; if you already pressed Ctrl-C, re-run `./setup.sh` and it will resume from cached completed downloads.
+- **`./setup.sh` looks stuck at `Preparing packages...`** — this is usually the vLLM wheel install, not the model download. On CUDA 13 hosts, uv may be preparing several GB of dependencies. Check activity with `htop`, `df -h /workspace /root`, or `du -sh ~/.cache/uv /workspace/envs/vllm 2>/dev/null`; if you already pressed Ctrl-C, re-run `./setup.sh` and it will resume from cached completed downloads. **If the byte counts sit unchanged for many minutes**, it's almost certainly a slow network `/workspace` (MooseFS), not the download — confirm the link is fine with `pip download --no-deps -d /tmp/dl triton` (should hit 100+ MB/s), then rebuild on local disk with `VENV_ROOT=/opt/envs ./setup.sh` (see "Slow `/workspace`?" in setup).
 - **`vllm` keeps restarting** — `supervisorctl tail -200 vllm stderr`. Common: missing `MODEL` / `VLLM_API_KEY` in env file, OOM (lower `MAX_LEN` or `GPU_UTIL`), gated model without `hf auth login`.
 - **Public URL returns 502** — Traefik is up but vLLM isn't ready yet. `supervisorctl status` and tail vllm logs; cold start can take a minute.
 - **`/v1/models` returns 401** — missing/wrong `Authorization: Bearer <key>` header.

@@ -3,7 +3,6 @@
 set -euo pipefail
 
 ENV_FILE=/workspace/envs/control_plane.env
-VENV=/workspace/envs/control_plane
 APP_DIR=/workspace/services/control_plane
 
 if [ -f "$ENV_FILE" ]; then
@@ -11,6 +10,14 @@ if [ -f "$ENV_FILE" ]; then
     # shellcheck source=/dev/null
     source "$ENV_FILE"
     set +a
+fi
+
+# Venv location is written into control_plane.env by setup.sh (CONTROL_PLANE_VENV);
+# it may live on local disk, wiped on a cold restart. Fall back to the legacy default.
+VENV="${CONTROL_PLANE_VENV:-/workspace/envs/control_plane}"
+if [ ! -d "$VENV" ]; then
+    echo "Missing venv at $VENV — run setup.sh" >&2
+    exit 1
 fi
 
 # shellcheck source=/dev/null
