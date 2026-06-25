@@ -125,18 +125,58 @@ export UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-4}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$VENV_ROOT/.uv-cache}"
 uv --version
 
-echo "==> vllm venv"
-if [ ! -d "$VENV" ]; then
-  uv venv --python 3.11 "$VENV"
+# Install mode. On some RunPod hosts uv's downloader stalls indefinitely on the
+# large CUDA wheels (torch ~500MB, flashinfer) while plain pip streams the exact
+# same files fine — the raw network is fast, it's uv-specific. pip mode routes
+# the heavy installs through pip instead.
+#
+# An explicit USE_PIP env var (0/1) always wins — set it for automation. On an
+# interactive run with no explicit choice, ask; default to uv (faster when it
+# works). Non-interactive with no env var falls back to uv.
+if [ -z "${USE_PIP+x}" ]; then
+  if [ -t 0 ]; then
+    echo "==> installer"
+    echo "    uv  — faster (default)"
+    echo "    pip — slower but reliable on hosts where uv stalls on big CUDA wheels"
+    read -r -p "    Install with [u]v / [p]ip? [u]: " _ans
+    case "${_ans:-u}" in
+      p|P|pip|PIP) USE_PIP=1 ;;
+      *)           USE_PIP=0 ;;
+    esac
+  else
+    USE_PIP=0
+  fi
 fi
+
+# Create the venv and, in pip mode, make sure it has pip (uv venvs ship without).
+ensure_venv() {  # $1 = venv path
+  local v="$1"
+  [ -d "$v" ] || uv venv --python 3.11 "$v"
+  if [ "$USE_PIP" = "1" ] && [ ! -x "$v/bin/pip" ]; then
+    uv pip install --python "$v/bin/python" pip
+  fi
+}
+
+# Install packages into a venv via pip or uv depending on USE_PIP.
+pkg_install() {  # $1 = venv path; remaining args = packages and/or `-r file`
+  local v="$1"; shift
+  if [ "$USE_PIP" = "1" ]; then
+    "$v/bin/pip" install --upgrade --timeout 180 --retries 5 "$@"
+  else
+    uv pip install --python "$v/bin/python" --upgrade "$@"
+  fi
+}
+
+echo "==> vllm venv (installer: $([ "$USE_PIP" = 1 ] && echo pip || echo uv))"
+ensure_venv "$VENV"
 # VLLM_PIN was set by the preflight block above (empty for CUDA-13 drivers,
 # '<0.20' for CUDA-12 drivers, or whatever the operator overrode).
 cat <<EOF
-    Installing vLLM can look stuck while uv downloads/prepares large CUDA wheels.
+    Installing vLLM can look stuck while it downloads/prepares large CUDA wheels.
     On CUDA 13 hosts this is commonly several GB (torch, cudnn, cublas, flashinfer).
-    If interrupted, re-run ./setup.sh; uv will reuse any completed downloads.
+    If uv stalls here with the bytes frozen for minutes, re-run with USE_PIP=1.
 EOF
-uv pip install --python "$VENV/bin/python" --upgrade "vllm${VLLM_PIN}" huggingface_hub
+pkg_install "$VENV" "vllm${VLLM_PIN}" huggingface_hub
 
 # Sanity-check: both torch.cuda allocation AND vllm._C must work. Lazy init
 # only fires when we touch a CUDA op — `is_available()` lies on its own.
@@ -158,11 +198,8 @@ print(f"    vllm={vllm.__version__}")
 PY
 
 echo "==> control_plane venv"
-if [ ! -d "$CP_VENV" ]; then
-  uv venv --python 3.11 "$CP_VENV"
-fi
-uv pip install --python "$CP_VENV/bin/python" --upgrade \
-  -r "$FILES/services/control_plane/requirements.txt"
+ensure_venv "$CP_VENV"
+pkg_install "$CP_VENV" -r "$FILES/services/control_plane/requirements.txt"
 
 echo "==> traefik binary"
 if [ ! -x "$TRAEFIK_BIN" ]; then
